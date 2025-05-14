@@ -1,0 +1,32 @@
+# === Block everything at root ===
+/*
+
+# === Allow these safe root files ===
+!/.gitignore
+!/file_list.txt
+
+# === Allow the projects directory and its content ===
+!/projects/
+!/projects/**
+
+# === Inside projects/, ignore common noise ===
+projects/**/__pycache__/
+projects/**/filter_history/
+projects/**/working_data/
+projects/**/venv/
+projects/**/*.json
+projects/**/*.old.py
+
+# === Ignore root-level runtime and tool junk ===
+/venv/
+/backups/
+/tests/
+/chat_log.txt
+/*.old.py
+/*.json
+*.pyc
+*.pyd
+*.log
+.DS_Store
+Thumbs.db
+desktop.ini
