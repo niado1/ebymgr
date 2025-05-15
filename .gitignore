@@ -5,6 +5,10 @@
 !.env
 !/.gitignore
 !/file_list.txt
+!CHANGELOG.md
+!/license
+!README.md
+
 
 # === Allow the projects directory and its content ===
 !/projects/
@@ -31,3 +35,5 @@ projects/**/*.old.py
 .DS_Store
 Thumbs.db
 desktop.ini
+__init__.py
+
