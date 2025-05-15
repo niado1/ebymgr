@@ -1,0 +1,7 @@
+beautifulsoup4
+config
+dotenv
+openpyxl
+pandas
+requests
+selenium
