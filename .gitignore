@@ -2,6 +2,7 @@
 /*
 
 # === Allow these safe root files ===
+!.env
 !/.gitignore
 !/file_list.txt
 
