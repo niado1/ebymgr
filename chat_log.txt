@@ -768,3 +768,123 @@ def get_orders_raw():
     token = get_access_token()
     # ... additional code omitted ...
 ```
+
+
+[Prompt - 2025-05-20 03:05:08.288019]
+You are helping build a local script to obtain an eBay refresh token using the Authorization Code Grant Flow.
+
+Create a complete working Python script using Flask that:
+
+1. Loads `EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET`, and `EBAY_REDIRECT_URI` from a `.env` file.
+   - Use `https://localhost:8080/callback` as the expected redirect URI.
+   - eBay requires HTTPS for redirect URIs, even for localhost.
+
+2. Starts a local Flask app on `https://localhost:8080` using `ssl_context='adhoc'` (self-signed cert).
+
+3. Defines a `/start` route that redirects the user to eBay's OAuth login page, including:
+   - client_id
+   - response_type=code
+   - redirect_uri
+   - scope
+
+4. Defines a `/callback` route to:
+   - Capture the returned authorization `code`
+   - Exchange the code for `access_token` and `refresh_token` using the correct POST to `https://api.ebay.com/identity/v1/oauth2/token`
+   - Show both tokens to the user on a success page
+
+5. Updates `.env` safely:
+   - If `EBAY_REFRESH_TOKEN` exists, replace it
+   - If not present, append it
+   - Preserve all other `.env` contents
+
+Use the `sell.fulfillment` scope and return a fully working script with no placeholders.
+
+Flask must run on `https://localhost:8080` with `ssl_context='adhoc'`.
+
+[Response]
+Below is a complete Python script that uses Flask to implement the eBay OAuth flow to obtain a refresh token. This script follows all the requirements you've specified, including reading from and updating the `.env` file, and setting up HTTPS for the Flask app.
+
+First, ensure you have the necessary Python packages installed:
+```bash
+pip install flask python-dotenv requests
+```
+
+Create a `.env` file with the following content (fill in your actual eBay credentials):
+```
+EBAY_CLIENT_ID=your_ebay_client_id
+EBAY_CLIENT_SECRET=your_ebay_client_secret
+EBAY_REDIRECT_URI=https://localhost:8080/callback
+```
+
+Here's the complete script:
+
+```python
+from flask import Flask, request, redirect, url_for
+from dotenv import load_dotenv, dotenv_values, set_key
+import os
+import requests
+
+app = Flask(__name__)
+load_dotenv()
+
+EBAY_CLIENT_ID = os.getenv('EBAY_CLIENT_ID')
+EBAY_CLIENT_SECRET = os.getenv('EBAY_CLIENT_SECRET')
+EBAY_REDIRECT_URI = os.getenv('EBAY_REDIRECT_URI')
+EBAY_AUTH_URL = "https://auth.ebay.com/oauth2/authorize"
+EBAY_TOKEN_URL = "https://api.ebay.com/identity/v1/oauth2/token"
+SCOPE = "https://api.ebay.com/oauth/api_scope/sell.fulfillment"
+
+@app.route('/start')
+def start():
+    params = {
+        'client_id': EBAY_CLIENT_ID,
+        'response_type': 'code',
+        'redirect_uri': EBAY_REDIRECT_URI,
+        'scope': SCOPE
+    }
+    login_url = requests.Request('GET', EBAY_AUTH_URL, params=params).prepare().url
+    return redirect(login_url)
+
+@app.route('/callback')
+def callback():
+    code = request.args.get('code')
+    headers = {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Authorization': f'Basic {requests.auth.HTTPBasicAuth(EBAY_CLIENT_ID, EBAY_CLIENT_SECRET).encode()}'
+    }
+    data = {
+        'grant_type': 'authorization_code',
+        'code': code,
+        'redirect_uri': EBAY_REDIRECT_URI
+    }
+    response = requests.post(EBAY_TOKEN_URL, headers=headers, data=data)
+    tokens = response.json()
+    access_token = tokens.get('access_token')
+    refresh_token = tokens.get('refresh_token')
+
+    # Update .env file with new refresh token
+    env_values = dotenv_values()
+    env_values['EBAY_REFRESH_TOKEN'] = refresh_token
+    with open('.env', 'w') as f:
+        for key, value in env_values.items():
+            f.write(f'{key}={value}\n')
+
+    return f"Access Token: {access_token}<br>Refresh Token: {refresh_token}"
+
+if __name__ == '__main__':
+    app.run(ssl_context='adhoc', port=8080)
+```
+
+### Key Points:
+1. **Environment Variables**: The script loads environment variables using `python-dotenv`.
+2. **OAuth Flow**: It handles the OAuth flow by redirecting to eBay's login page and then handling the callback to exchange the authorization code for tokens.
+3. **HTTPS Configuration**: The Flask app runs with an ad-hoc SSL context to satisfy eBay's requirement for HTTPS even on localhost.
+4. **Updating `.env` File**: The script updates the `.env` file with the new refresh token without losing other existing settings.
+
+### Running the Script:
+- Start the script.
+- Navigate to `https://localhost:8080/start` in your browser to initiate the OAuth flow.
+- Log in to eBay and authorize the application.
+- The script will display the access and refresh tokens and update the `.env` file accordingly.
+
+Make sure to handle any potential errors in real-world applications, such as checking the response status code from eBay and handling exceptions.
