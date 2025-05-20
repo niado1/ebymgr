@@ -18,11 +18,11 @@ def generate_pick_sheet(orders, timestamp=None):
     df["variationAttributes"] = df.get("variationAttributes", "")
     df["trackingNumber"] = df.get("trackingNumber", "")
     df["shippingService"] = df.get("shippingService", "")
-    df["trackingStatus"] = df.get("trackingStatus", "")
+    df["trackingStatus"] = df.get("trackingStatus", "").str.upper()  # Normalize to uppercase
     df["categoryId"] = df.get("categoryId", "")
     df["itemCost"] = df.get("itemCost", 0)
     df["daysLate"] = df.get("daysLate", "")
-    df["reship"] = df.get("reship", False)
+    df["reship"] = df.get("reship", "").str.lower() == "true"  # Normalize to boolean
 
     df["note"] = df.get("note", "")
 
@@ -46,10 +46,10 @@ def generate_pick_sheet(orders, timestamp=None):
 
     # Filtered sheets
     sheets = {
-        "hot": df[df["daysLate"] == "HOT"],
+        "hot": df[df["daysLate"].str.upper() == "HOT"],  # Ensure comparison in uppercase
         "reships": df[df["reship"] == True],
         "notes": df[df["note"].str.strip() != ""],
-        "delivered": df[df["trackingStatus"] == "Delivered"],
+        "delivered": df[df["trackingStatus"] == "DELIVERED"],  # Corrected case sensitivity
     }
 
     for label, sub_df in sheets.items():

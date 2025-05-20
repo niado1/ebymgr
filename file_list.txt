@@ -1,4 +1,3 @@
-.env
 .gitignore
 CHANGELOG.md
 LICENSE
@@ -28,6 +27,7 @@ orders.py
 picksheet.py
 project_selector.py
 project_selector_autorun.py
+prompt.txt
 requirements.txt
 requirements_ebymgr.txt
 schema_fields.md

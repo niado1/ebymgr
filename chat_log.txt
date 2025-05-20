@@ -322,3 +322,172 @@ Hello! How can I assist you today? If you have any questions or need help with s
 test
 [Response]
 Hello! How can I assist you today? If you have any questions or need help with something, feel free to ask!
+
+
+[Prompt - 2025-05-20 00:57:54.408260]
+You are assisting with a bug fix in a Python script from the "ebymgr" project.
+[Response]
+Sure, I'd be happy to help with the bug fix in the Python script from the "ebymgr" project. Please provide me with the details of the issue, including any error messages, the relevant parts of the script, and what the expected behavior should be.
+
+
+[Prompt - 2025-05-20 01:13:58.720265]
+You are assisting with a bug fix in a Python script from the "ebymgr" project.
+
+Here is the traceback or error message:
+The function `generate_pick_sheet()` in `picksheet.py` produces four filtered Excel sheets:
+- pick_sheet_hot_*.xlsx
+- pick_sheet_reships_*.xlsx
+- pick_sheet_notes_*.xlsx (this one works)
+- pick_sheet_delivered_*.xlsx
+
+Only the `notes` sheet currently contains any data. The other three are empty.
+Fix the filtering logic in this function to ensure correct rows populate the `hot`, `reships`, and `delivered` sheets.
+
+Relevant issues:
+- 'trackingStatus' contains uppercase values like "DELIVERED" but is checked as "Delivered"
+- 'reship' may contain string "True" or null instead of boolean
+- 'daysLate' == "HOT" may no longer be populated
+
+Normalize the necessary fields and fix the filters.
+
+Return the full corrected function code. Do not include placeholders or boilerplate.
+
+And here is the file causing the issue:
+import os
+import pandas as pd
+from datetime import datetime
+from openpyxl import Workbook
+
+FILTER_DIR = "filter_history"
+os.makedirs(FILTER_DIR, exist_ok=True)
+
+def generate_pick_sheet(orders, timestamp=None):
+    if timestamp is None:
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
+
+    df = pd.DataFrame(orders)
+
+    # Fill missing fields with safe defaults
+    df["shortTitle"] = df.get("shortTitle", "")
+    df["listingUrl"] = df.get("listingUrl", "")
+    df["variationAttributes"] = df.get("variationAttributes", "")
+    df["trackingNumber"] = df.get("trackingNumber", "")
+    df["shippingService"] = df.get("shippingService", "")
+    df["trackingStatus"] = df.get("trackingStatus", "")
+    df["categoryId"] = df.get("categoryId", "")
+    df["itemCost"] = df.get("itemCost", 0)
+    df["daysLate"] = df.get("daysLate", "")
+    df["reship"] = df.get("reship", False)
+
+    df["note"] = df.get("note", "")
+
+    # Define output columns
+    output_columns = [
+        "shortTitle",
+        "listingUrl",
+        "variationAttributes",
+        "trackingNumber",
+        "shippingService",
+        "trackingStatus",
+        "categoryId",
+        "itemCost",
+        "daysLate",
+        "reship",
+        "note",
+    ]
+
+    # Ensure clean formatting
+    df["itemCost"] = pd.to_numeric(df["itemCost"], errors="coerce").fillna(0)
+
+    # Filtered sheets
+    sheets = {
+        "hot": df[df["daysLate"] == "HOT"],
+        "reships": df[df["reship"] == True],
+        "notes": df[df["note"].str.strip() != ""],
+        "delivered": df[df["trackingStatus"] == "Delivered"],
+    }
+
+    for label, sub_df in sheets.items():
+        path = os.path.join(FILTER_DIR, f"pick_sheet_{label}_{timestamp}.xlsx")
+        sub_df.to_excel(path, index=False, columns=output_columns)
+        print(f"✅ Exported: {path}")
+
+    # Full sheet as CSV (including all columns for raw ref)
+    csv_path = os.path.join(FILTER_DIR, f"pick_sheet_full_{timestamp}.csv")
+    df.to_csv(csv_path, index=False)
+    print(f"✅ Exported: {csv_path}")
+
+
+Your task:
+- Identify the bug
+- Provide the corrected code
+- If necessary, add a brief comment above the fix
+
+Return the complete corrected file. No explanation outside the code.
+
+[Response]
+```python
+import os
+import pandas as pd
+from datetime import datetime
+from openpyxl import Workbook
+
+FILTER_DIR = "filter_history"
+os.makedirs(FILTER_DIR, exist_ok=True)
+
+def generate_pick_sheet(orders, timestamp=None):
+    if timestamp is None:
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
+
+    df = pd.DataFrame(orders)
+
+    # Fill missing fields with safe defaults
+    df["shortTitle"] = df.get("shortTitle", "")
+    df["listingUrl"] = df.get("listingUrl", "")
+    df["variationAttributes"] = df.get("variationAttributes", "")
+    df["trackingNumber"] = df.get("trackingNumber", "")
+    df["shippingService"] = df.get("shippingService", "")
+    df["trackingStatus"] = df.get("trackingStatus", "").str.upper()  # Normalize to uppercase
+    df["categoryId"] = df.get("categoryId", "")
+    df["itemCost"] = df.get("itemCost", 0)
+    df["daysLate"] = df.get("daysLate", "")
+    df["reship"] = df.get("reship", "").str.lower() == "true"  # Normalize to boolean
+
+    df["note"] = df.get("note", "")
+
+    # Define output columns
+    output_columns = [
+        "shortTitle",
+        "listingUrl",
+        "variationAttributes",
+        "trackingNumber",
+        "shippingService",
+        "trackingStatus",
+        "categoryId",
+        "itemCost",
+        "daysLate",
+        "reship",
+        "note",
+    ]
+
+    # Ensure clean formatting
+    df["itemCost"] = pd.to_numeric(df["itemCost"], errors="coerce").fillna(0)
+
+    # Filtered sheets
+    sheets = {
+        "hot": df[df["daysLate"].str.upper() == "HOT"],  # Ensure comparison in uppercase
+        "reships": df[df["reship"] == True],
+        "notes": df[df["note"].str.strip() != ""],
+        "delivered": df[df["trackingStatus"] == "DELIVERED"],  # Corrected case sensitivity
+    }
+
+    for label, sub_df in sheets.items():
+        path = os.path.join(FILTER_DIR, f"pick_sheet_{label}_{timestamp}.xlsx")
+        sub_df.to_excel(path, index=False, columns=output_columns)
+        print(f"✅ Exported: {path}")
+
+    # Full sheet as CSV (including all columns for raw ref)
+    csv_path = os.path.join(FILTER_DIR, f"pick_sheet_full_{timestamp}.csv")
+    df.to_csv(csv_path, index=False)
+    print(f"✅ Exported: {csv_path}")
+```

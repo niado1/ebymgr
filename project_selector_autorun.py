@@ -15,6 +15,7 @@ EXCLUDED_FILES = {
     "raw_orders_with_fulfillments.json",
     "setup_env.bat",
     "setup_env.sh",
+    ".env"
 }
 
 def is_valid_file(path):
