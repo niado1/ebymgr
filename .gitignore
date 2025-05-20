@@ -4,6 +4,7 @@
 # Allow only explicitly tracked files:
 !.env
 !.gitignore
+!changelog.txt
 !CHANGELOG.md
 !LICENSE
 !README.md

@@ -5,6 +5,7 @@ README.md
 auth.py
 backlog_export.py
 backup_and_push.py
+changelog.txt
 chat_log.txt
 chat_with_gpt.py
 config.py
