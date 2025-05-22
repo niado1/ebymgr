@@ -18,11 +18,20 @@ def generate_pick_sheet(orders, timestamp=None):
     df["variationAttributes"] = df.get("variationAttributes", "")
     df["trackingNumber"] = df.get("trackingNumber", "")
     df["shippingService"] = df.get("shippingService", "")
-    df["trackingStatus"] = df.get("trackingStatus", "").str.upper()  # Normalize to uppercase
+
+    # Corrected handling for 'trackingStatus' to ensure it's always treated as a Series
+    if "trackingStatus" not in df:
+        df["trackingStatus"] = ""
+    df["trackingStatus"] = df["trackingStatus"].astype(str).str.upper()
+
     df["categoryId"] = df.get("categoryId", "")
     df["itemCost"] = df.get("itemCost", 0)
     df["daysLate"] = df.get("daysLate", "")
-    df["reship"] = df.get("reship", "").str.lower() == "true"  # Normalize to boolean
+
+    # Normalize 'reship' to boolean
+    if "reship" not in df:
+        df["reship"] = ""
+    df["reship"] = df["reship"].astype(str).str.lower() == "true"
 
     df["note"] = df.get("note", "")
 

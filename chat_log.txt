@@ -1372,3 +1372,176 @@ In this corrected script:
 - The import statement `from orders import fetch_tracking_data_from_fulfillment` and the function call `tracking_data = fetch_tracking_data_from_fulfillment(df)` have been removed.
 - The script continues to process the order data, ensuring all necessary fields are handled correctly.
 - The script ensures that the data is prepared appropriately for the pick sheet generation without attempting to merge non-existent tracking data.
+
+
+[Prompt - 2025-05-21 23:30:56.339596]
+You are fixing a bug in `picksheet.py` that processes eBay order data.
+
+Error traceback:
+```
+AttributeError: 'str' object has no attribute 'str'
+```
+
+It occurs on this line:
+```python
+df["trackingStatus"] = df.get("trackingStatus", "").str.upper()
+```
+
+The error happens because `df.get("trackingStatus", "")` returns a string (not a pandas Series) when the column is missing.
+
+Your task:
+- Fix this line so it safely handles the case where 'trackingStatus' might not exist yet
+- Ensure the column is always treated as a pandas Series before calling `.str.upper()`
+- Normalize missing or invalid entries to an empty string and uppercase any existing string values
+
+Return the full corrected version of `picksheet.py`.
+No placeholders or boilerplate. The script must run as part of the full order processing pipeline and avoid crashing on missing or misformatted data.
+
+# === Injected from GitHub: picksheet.py ===
+import os
+import pandas as pd
+from datetime import datetime
+from openpyxl import Workbook
+
+FILTER_DIR = "filter_history"
+os.makedirs(FILTER_DIR, exist_ok=True)
+
+def generate_pick_sheet(orders, timestamp=None):
+    if timestamp is None:
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
+
+    df = pd.DataFrame(orders)
+
+    # Fill missing fields with safe defaults
+    df["shortTitle"] = df.get("shortTitle", "")
+    df["listingUrl"] = df.get("listingUrl", "")
+    df["variationAttributes"] = df.get("variationAttributes", "")
+    df["trackingNumber"] = df.get("trackingNumber", "")
+    df["shippingService"] = df.get("shippingService", "")
+    df["trackingStatus"] = df.get("trackingStatus", "").str.upper()  # Normalize to uppercase
+    df["categoryId"] = df.get("categoryId", "")
+    df["itemCost"] = df.get("itemCost", 0)
+    df["daysLate"] = df.get("daysLate", "")
+    df["reship"] = df.get("reship", "").str.lower() == "true"  # Normalize to boolean
+
+    df["note"] = df.get("note", "")
+
+    # Define output columns
+    output_columns = [
+        "shortTitle",
+        "listingUrl",
+        "variationAttributes",
+        "trackingNumber",
+        "shippingService",
+        "trackingStatus",
+        "categoryId",
+        "itemCost",
+        "daysLate",
+        "reship",
+        "note",
+    ]
+
+    # Ensure clean formatting
+    df["itemCost"] = pd.to_numeric(df["itemCost"], errors="coerce").fillna(0)
+
+    # Filtered sheets
+    sheets = {
+        "hot": df[df["daysLate"].str.upper() == "HOT"],  # Ensure comparison in uppercase
+        "reships": df[df["reship"] == True],
+        "notes": df[df["note"].str.strip() != ""],
+        "delivered": df[df["trackingStatus"] == "DELIVERED"],  # Corrected case sensitivity
+    }
+
+    for label, sub_df in sheets.items():
+        path = os.path.join(FILTER_DIR, f"pick_sheet_{label}_{timestamp}.xlsx")
+        sub_df.to_excel(path, index=False, columns=output_columns)
+        print(f"✅ Exported: {path}")
+
+    # Full sheet as CSV (including all columns for raw ref)
+    csv_path = os.path.join(FILTER_DIR, f"pick_sheet_full_{timestamp}.csv")
+    df.to_csv(csv_path, index=False)
+    print(f"✅ Exported: {csv_path}")
+
+
+[Response]
+Here is the corrected version of `picksheet.py` with the necessary adjustments to handle missing or misformatted data safely:
+
+```python
+import os
+import pandas as pd
+from datetime import datetime
+from openpyxl import Workbook
+
+FILTER_DIR = "filter_history"
+os.makedirs(FILTER_DIR, exist_ok=True)
+
+def generate_pick_sheet(orders, timestamp=None):
+    if timestamp is None:
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
+
+    df = pd.DataFrame(orders)
+
+    # Fill missing fields with safe defaults
+    df["shortTitle"] = df.get("shortTitle", "")
+    df["listingUrl"] = df.get("listingUrl", "")
+    df["variationAttributes"] = df.get("variationAttributes", "")
+    df["trackingNumber"] = df.get("trackingNumber", "")
+    df["shippingService"] = df.get("shippingService", "")
+
+    # Corrected handling for 'trackingStatus' to ensure it's always treated as a Series
+    if "trackingStatus" not in df:
+        df["trackingStatus"] = ""
+    df["trackingStatus"] = df["trackingStatus"].astype(str).str.upper()
+
+    df["categoryId"] = df.get("categoryId", "")
+    df["itemCost"] = df.get("itemCost", 0)
+    df["daysLate"] = df.get("daysLate", "")
+
+    # Normalize 'reship' to boolean
+    if "reship" not in df:
+        df["reship"] = ""
+    df["reship"] = df["reship"].astype(str).str.lower() == "true"
+
+    df["note"] = df.get("note", "")
+
+    # Define output columns
+    output_columns = [
+        "shortTitle",
+        "listingUrl",
+        "variationAttributes",
+        "trackingNumber",
+        "shippingService",
+        "trackingStatus",
+        "categoryId",
+        "itemCost",
+        "daysLate",
+        "reship",
+        "note",
+    ]
+
+    # Ensure clean formatting
+    df["itemCost"] = pd.to_numeric(df["itemCost"], errors="coerce").fillna(0)
+
+    # Filtered sheets
+    sheets = {
+        "hot": df[df["daysLate"].str.upper() == "HOT"],  # Ensure comparison in uppercase
+        "reships": df[df["reship"] == True],
+        "notes": df[df["note"].str.strip() != ""],
+        "delivered": df[df["trackingStatus"] == "DELIVERED"],  # Corrected case sensitivity
+    }
+
+    for label, sub_df in sheets.items():
+        path = os.path.join(FILTER_DIR, f"pick_sheet_{label}_{timestamp}.xlsx")
+        sub_df.to_excel(path, index=False, columns=output_columns)
+        print(f"✅ Exported: {path}")
+
+    # Full sheet as CSV (including all columns for raw ref)
+    csv_path = os.path.join(FILTER_DIR, f"pick_sheet_full_{timestamp}.csv")
+    df.to_csv(csv_path, index=False)
+    print(f"✅ Exported: {csv_path}")
+```
+
+### Key Changes:
+1. **Handling of `trackingStatus`**: The code now checks if the column exists before trying to modify it. If it does not exist, it initializes it with an empty string. Then, it converts the column to string type and applies the `str.upper()` transformation.
+2. **Handling of `reship`**: Similar to `trackingStatus`, it ensures the column exists and normalizes its values to boolean based on the string content.
+3. **General Robustness**: This approach ensures that the script will not crash even if certain expected columns are missing from the input data.

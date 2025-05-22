@@ -3,6 +3,7 @@ CHANGELOG.md
 LICENSE
 README.md
 auth.py
+backlog_export.old1.py
 backlog_export.py
 backup_and_push.py
 changelog.txt
@@ -28,6 +29,7 @@ move_ebymgr_to_root.py
 orders.py
 picksheet.py
 project_selector.py
+project_selector_autorun.old2.py
 project_selector_autorun.py
 prompt.txt
 requirements.txt
