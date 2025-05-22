@@ -1,9 +1,11 @@
 import os
 import subprocess
 import sys
+import requests
 
 FILE_LIST_PATH = "file_list.txt"
 REQUIREMENTS_FILE = "requirements.txt"
+PROMPT_FILE = "prompt.txt"
 
 EXCLUDED_DIRS = {"__pycache__", ".venv", "venv", ".git", "backups", "filter_history", "working_data", "tests"}
 EXCLUDED_EXTENSIONS = {".pyc", ".pyd", ".log", ".DS_Store", "Thumbs.db", "desktop.ini", ".json", ".old.py"}
@@ -33,7 +35,7 @@ def generate_file_list(root="."):
         dirs[:] = [d for d in dirs if d not in EXCLUDED_DIRS]
         for file in files:
             full_path = os.path.join(dirpath, file)
-            rel_path = os.path.relpath(full_path, start=".").replace("\\", "/").replace("\\", "/")
+            rel_path = os.path.relpath(full_path, start=".").replace("\\", "/")
             if is_valid_file(rel_path):
                 tracked_files.append(rel_path)
 
@@ -51,9 +53,38 @@ def ensure_dependencies():
         print("Missing dependencies. Installing...")
         subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", REQUIREMENTS_FILE])
 
+def inject_from_github():
+    filenames = input("Enter comma-separated filenames to inject from GitHub (or press Enter to skip): ").strip()
+    if not filenames:
+        return
+
+    if not os.path.exists(PROMPT_FILE):
+        print("❌ No prompt.txt found.")
+        return
+
+    with open(PROMPT_FILE, "r", encoding="utf-8") as f:
+        prompt_body = f.read()
+
+    with open(PROMPT_FILE, "w", encoding="utf-8") as f:
+        f.write(prompt_body.strip() + "\n\n")
+
+        for filename in [fn.strip() for fn in filenames.split(",") if fn.strip()]:
+            url = f"https://raw.githubusercontent.com/niado1/ebymgr/main/{filename}"
+            print(f"📡 Fetching {filename} from GitHub...")
+            try:
+                response = requests.get(url)
+                response.raise_for_status()
+                file_content = response.text
+                f.write(f"# === Injected from GitHub: {filename} ===\n")
+                f.write(file_content + "\n\n")
+                print(f"✅ Injected {filename} into prompt.txt")
+            except Exception as e:
+                print(f"❌ Failed to retrieve {filename}: {e}")
+
 def main():
     ensure_dependencies()
     generate_file_list()
+    inject_from_github()
     subprocess.run([sys.executable, "chat_with_gpt.py"])
     subprocess.run([sys.executable, "backup_and_push.py"])
 

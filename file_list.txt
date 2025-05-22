@@ -13,6 +13,7 @@ create_github_issue.py
 create_github_repo_and_push.py
 diagnose.py
 ebyauth.py
+exchange_ebay_code_for_tokens.py
 file_list.txt
 fix_git_path.py
 get_tracking_status.py
@@ -33,3 +34,4 @@ requirements.txt
 requirements_ebymgr.txt
 schema_fields.md
 test_linked_order_tracking.py
+token_generator.py

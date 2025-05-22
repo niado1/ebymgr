@@ -37,6 +37,8 @@
 !requirements_ebymgr.txt
 !schema_fields.md
 !test_linked_order_tracking.py
+!exchange_ebay_code_for_tokens.py
+
 
 # Ignore junk anywhere
 *.pyc
