@@ -6,37 +6,20 @@ from picksheet import generate_pick_sheet
 def generate_backlog_exports(all_orders):
     df = pd.DataFrame(all_orders)
 
-    # Extract fields from lineItems[0]
-    df['title'] = df['lineItems'].apply(lambda items: items[0].get('title', '') if isinstance(items, list) and items else '')
-    df['categoryId'] = df['lineItems'].apply(lambda items: items[0].get('categoryId', '') if isinstance(items, list) and items else '')
-    df['legacyItemId'] = df['lineItems'].apply(lambda items: items[0].get('legacyItemId', '') if isinstance(items, list) and items else '')
-    df['variationAttributes'] = df['lineItems'].apply(
-        lambda items: ', '.join(f"{va['name']}: {va['value']}" for va in items[0].get('variationAspects', []))
-        if isinstance(items, list) and items and isinstance(items[0], dict) and 'variationAspects' in items[0]
-        else ''
+    # Safely access 'lineItems' and other fields
+    df['title'] = df.apply(lambda row: row['lineItems'][0].get('title', '') if 'lineItems' in row and isinstance(row['lineItems'], list) and row['lineItems'] else '', axis=1)
+    df['categoryId'] = df.apply(lambda row: row['lineItems'][0].get('categoryId', '') if 'lineItems' in row and isinstance(row['lineItems'], list) and row['lineItems'] else '', axis=1)
+    df['legacyItemId'] = df.apply(lambda row: row['lineItems'][0].get('legacyItemId', '') if 'lineItems' in row and isinstance(row['lineItems'], list) and row['lineItems'] else '', axis=1)
+    df['variationAttributes'] = df.apply(
+        lambda row: ', '.join(f"{va['name']}: {va['value']}" for va in row['lineItems'][0].get('variationAspects', []))
+        if 'lineItems' in row and isinstance(row['lineItems'], list) and row['lineItems'] and isinstance(row['lineItems'][0], dict) and 'variationAspects' in row['lineItems'][0]
+        else '', axis=1
     )
 
     # Ensure required fields exist with default values
-    if "buyer" not in df.columns:
-        df["buyer"] = []
-    if "pricingSummary" not in df.columns:
-        df["pricingSummary"] = []
-    if "buyerCheckoutNotes" not in df.columns:
-        df["buyerCheckoutNotes"] = ''
-    if "personalization" not in df.columns:
-        df["personalization"] = ''
-    if "title" not in df.columns:
-        df["title"] = ''
-    if "legacyItemId" not in df.columns:
-        df["legacyItemId"] = ''
-    if "orderDate" not in df.columns:
-        df["orderDate"] = pd.NaT
-    if "categoryId" not in df.columns:
-        df["categoryId"] = ''
-    if "itemCost" not in df.columns:
-        df["itemCost"] = 0
-    if "reship" not in df.columns:
-        df["reship"] = ''
+    for field in ["buyer", "pricingSummary", "buyerCheckoutNotes", "personalization", "title", "legacyItemId", "orderDate", "categoryId", "itemCost", "reship"]:
+        if field not in df.columns:
+            df[field] = '' if df.dtypes.get(field, pd.Series(dtype='object')).name in ['object', 'str'] else pd.NaT
 
     # Merge note fields
     df['note'] = df.apply(lambda row: f"{str(row.get('buyerCheckoutNotes', '')).strip()} | {str(row.get('personalization', '')).strip()}".strip(' |'), axis=1)

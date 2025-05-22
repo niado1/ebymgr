@@ -34,4 +34,3 @@ requirements.txt
 requirements_ebymgr.txt
 schema_fields.md
 test_linked_order_tracking.py
-token_generator.py
