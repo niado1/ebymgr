@@ -24,11 +24,6 @@ def generate_backlog_exports(all_orders):
     # Merge note fields
     df['note'] = df.apply(lambda row: f"{str(row.get('buyerCheckoutNotes', '')).strip()} | {str(row.get('personalization', '')).strip()}".strip(' |'), axis=1)
 
-    # Extract tracking info from fulfillmentHrefs
-    from orders import fetch_tracking_data_from_fulfillment
-    tracking_data = fetch_tracking_data_from_fulfillment(df)
-    df = df.merge(tracking_data, on='orderId', how='left')
-
     df["buyerNote"] = df.get("buyerNote", "")
 
     # Add shortTitle and listingUrl
