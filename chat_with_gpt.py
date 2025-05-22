@@ -66,12 +66,12 @@ def run_tests():
                 print(f"Failed to create GitHub issue: {e}")
     except Exception as e:
         print(f"Test run error: {e}")
+
 def main():
     prompt_file = "prompt.txt"
     if os.path.exists(prompt_file):
         with open(prompt_file, "r", encoding="utf-8") as f:
             prompt = f.read()
-        os.remove(prompt_file)
         print("✅ Loaded prompt from prompt.txt")
     else:
         prompt = input("Enter your prompt: ")
@@ -80,34 +80,6 @@ def main():
     log_chat(prompt, reply)
     print("\n--- GPT Reply ---\n")
     print(reply)
-
-    blocks = extract_code_blocks(reply)
-    if not blocks:
-        print("No code blocks found.")
-        return
-
-    for i, block in enumerate(blocks):
-        filename = input(f"Enter filename to apply code block {i+1} (default: script_{i+1}.py): ").strip()
-        if not filename:
-            filename = f"script_{i+1}.py"
-
-        updated_code = block.strip()
-        if os.path.exists(filename):
-            with open(filename, "r", encoding="utf-8") as f:
-                original_code = f.read()
-            diff = show_diff(original_code, updated_code)
-            print(f"\n--- Diff for {filename} ---\n{diff}\n")
-            confirm = input("Apply changes? (y/n): ").lower()
-            if confirm != "y":
-                print(f"Skipped: {filename}")
-                continue
-        else:
-            diff = "New file created."
-
-        with open(filename, "w", encoding="utf-8") as f:
-            f.write(updated_code)
-        print(f"Updated: {filename}")
-        log_changelog(filename, diff)
 
 if __name__ == "__main__":
     main()

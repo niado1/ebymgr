@@ -1545,3 +1545,740 @@ def generate_pick_sheet(orders, timestamp=None):
 1. **Handling of `trackingStatus`**: The code now checks if the column exists before trying to modify it. If it does not exist, it initializes it with an empty string. Then, it converts the column to string type and applies the `str.upper()` transformation.
 2. **Handling of `reship`**: Similar to `trackingStatus`, it ensures the column exists and normalizes its values to boolean based on the string content.
 3. **General Robustness**: This approach ensures that the script will not crash even if certain expected columns are missing from the input data.
+
+
+[Prompt - 2025-05-21 23:49:47.419550]
+You are auditing and correcting two linked scripts in an eBay order management tool:
+
+1. `backlog_export.py` - constructs a pandas DataFrame from a list of eBay orders and prepares the data
+2. `picksheet.py` - generates multiple Excel pick sheets from the records it receives
+
+---
+
+📦 Problem:
+All generated pick sheets (`hot.xlsx`, `reships.xlsx`, `notes.xlsx`, `delivered.xlsx`) are currently empty.
+
+The problem could be caused by:
+- Missing or misnamed fields in the DataFrame coming from `backlog_export.py`
+- Filters in `picksheet.py` that rely on inconsistent or unnormalized data
+- Wrong datatypes (e.g. booleans as strings, missing fields defaulting to incorrect values)
+
+---
+
+✅ Your task:
+
+1. Audit and fix `backlog_export.py` to ensure all required fields are extracted and populated correctly.
+2. Audit and fix `picksheet.py` to ensure filters and column logic match the actual incoming data.
+3. Make sure filters like 'HOT', 'reships', 'delivered', and 'note' match the data correctly.
+
+Here is the required final column output spec:
+
+- shortTitle: Cleaned and shortened title from lineItems[0].title
+- listingUrl: Constructed from lineItems[0].legacyItemId
+- variationAttributes: Comma-separated string of variationAspects
+- trackingNumber: From fulfillment data
+- shippingService: From fulfillment data
+- trackingStatus: From fulfillment data (normalized to uppercase string)
+- categoryId: From lineItems[0].categoryId
+- itemCost: Numeric total or gross value
+- daysLate: Calculated from orderDate
+- reship: Boolean, from reship field (may be a string "true")
+- note: Merged string from buyerCheckoutNotes and personalization (if either is present)
+
+---
+
+Return corrected versions of BOTH files:
+- backlog_export.py
+- picksheet.py
+
+They must work together to produce valid pick sheets containing actual data from realistic order inputs.
+
+Do not output explanations — return only both full scripts in markdown code blocks.
+
+# === Injected from GitHub: backlog_export.py ===
+import os
+import pandas as pd
+from datetime import datetime
+from picksheet import generate_pick_sheet
+
+def generate_backlog_exports(all_orders):
+    df = pd.DataFrame(all_orders)
+
+    # Safely access 'lineItems' and other fields
+    df['title'] = df.apply(lambda row: row['lineItems'][0].get('title', '') if 'lineItems' in row and isinstance(row['lineItems'], list) and row['lineItems'] else '', axis=1)
+    df['categoryId'] = df.apply(lambda row: row['lineItems'][0].get('categoryId', '') if 'lineItems' in row and isinstance(row['lineItems'], list) and row['lineItems'] else '', axis=1)
+    df['legacyItemId'] = df.apply(lambda row: row['lineItems'][0].get('legacyItemId', '') if 'lineItems' in row and isinstance(row['lineItems'], list) and row['lineItems'] else '', axis=1)
+    df['variationAttributes'] = df.apply(
+        lambda row: ', '.join(f"{va['name']}: {va['value']}" for va in row['lineItems'][0].get('variationAspects', []))
+        if 'lineItems' in row and isinstance(row['lineItems'], list) and row['lineItems'] and isinstance(row['lineItems'][0], dict) and 'variationAspects' in row['lineItems'][0]
+        else '', axis=1
+    )
+
+    # Ensure required fields exist with default values
+    for field in ["buyer", "pricingSummary", "buyerCheckoutNotes", "personalization", "title", "legacyItemId", "orderDate", "categoryId", "itemCost", "reship"]:
+        if field not in df.columns:
+            df[field] = '' if df.dtypes.get(field, pd.Series(dtype='object')).name in ['object', 'str'] else pd.NaT
+
+    # Merge note fields
+    df['note'] = df.apply(lambda row: f"{str(row.get('buyerCheckoutNotes', '')).strip()} | {str(row.get('personalization', '')).strip()}".strip(' |'), axis=1)
+
+    df["buyerNote"] = df.get("buyerNote", "")
+
+    # Add shortTitle and listingUrl
+    df["shortTitle"] = df["title"].astype(str).str.replace(r"[^a-zA-Z0-9 ]", "", regex=True).str.slice(0, 50)
+    df["listingUrl"] = "https://www.ebay.com/itm/" + df["legacyItemId"].astype(str)
+
+    # Parse and categorize lateness
+    df["orderDate"] = pd.to_datetime(df.get("orderDate", pd.NaT), errors="coerce")
+
+    def categorize_lateness(date):
+        if pd.isnull(date):
+            return ""
+        delta = (datetime.now() - date).days
+        if delta > 10:
+            return "HOT"
+        elif delta > 5:
+            return "Urgent"
+        elif delta > 3:
+            return "Late"
+        return ""
+
+    df["daysLate"] = df["orderDate"].apply(categorize_lateness)
+
+    df["categoryId"] = df.get("categoryId", "")
+    df["itemCost"] = pd.to_numeric(df.get("itemCost", pd.Series([0] * len(df))), errors="coerce").fillna(0)
+
+    # Send to picksheet generator
+    generate_pick_sheet(df.to_dict(orient="records"))
+
+# === Injected from GitHub: picksheet.py ===
+import os
+import pandas as pd
+from datetime import datetime
+from openpyxl import Workbook
+
+FILTER_DIR = "filter_history"
+os.makedirs(FILTER_DIR, exist_ok=True)
+
+def generate_pick_sheet(orders, timestamp=None):
+    if timestamp is None:
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
+
+    df = pd.DataFrame(orders)
+
+    # Fill missing fields with safe defaults
+    df["shortTitle"] = df.get("shortTitle", "")
+    df["listingUrl"] = df.get("listingUrl", "")
+    df["variationAttributes"] = df.get("variationAttributes", "")
+    df["trackingNumber"] = df.get("trackingNumber", "")
+    df["shippingService"] = df.get("shippingService", "")
+
+    # Corrected handling for 'trackingStatus' to ensure it's always treated as a Series
+    if "trackingStatus" not in df:
+        df["trackingStatus"] = ""
+    df["trackingStatus"] = df["trackingStatus"].astype(str).str.upper()
+
+    df["categoryId"] = df.get("categoryId", "")
+    df["itemCost"] = df.get("itemCost", 0)
+    df["daysLate"] = df.get("daysLate", "")
+
+    # Normalize 'reship' to boolean
+    if "reship" not in df:
+        df["reship"] = ""
+    df["reship"] = df["reship"].astype(str).str.lower() == "true"
+
+    df["note"] = df.get("note", "")
+
+    # Define output columns
+    output_columns = [
+        "shortTitle",
+        "listingUrl",
+        "variationAttributes",
+        "trackingNumber",
+        "shippingService",
+        "trackingStatus",
+        "categoryId",
+        "itemCost",
+        "daysLate",
+        "reship",
+        "note",
+    ]
+
+    # Ensure clean formatting
+    df["itemCost"] = pd.to_numeric(df["itemCost"], errors="coerce").fillna(0)
+
+    # Filtered sheets
+    sheets = {
+        "hot": df[df["daysLate"].str.upper() == "HOT"],  # Ensure comparison in uppercase
+        "reships": df[df["reship"] == True],
+        "notes": df[df["note"].str.strip() != ""],
+        "delivered": df[df["trackingStatus"] == "DELIVERED"],  # Corrected case sensitivity
+    }
+
+    for label, sub_df in sheets.items():
+        path = os.path.join(FILTER_DIR, f"pick_sheet_{label}_{timestamp}.xlsx")
+        sub_df.to_excel(path, index=False, columns=output_columns)
+        print(f"✅ Exported: {path}")
+
+    # Full sheet as CSV (including all columns for raw ref)
+    csv_path = os.path.join(FILTER_DIR, f"pick_sheet_full_{timestamp}.csv")
+    df.to_csv(csv_path, index=False)
+    print(f"✅ Exported: {csv_path}")
+
+
+[Response]
+```python
+# === Corrected backlog_export.py ===
+import os
+import pandas as pd
+from datetime import datetime
+from picksheet import generate_pick_sheet
+
+def generate_backlog_exports(all_orders):
+    df = pd.DataFrame(all_orders)
+
+    # Safely access 'lineItems' and other fields
+    df['title'] = df.apply(lambda row: row['lineItems'][0].get('title', '') if 'lineItems' in row and isinstance(row['lineItems'], list) and row['lineItems'] else '', axis=1)
+    df['categoryId'] = df.apply(lambda row: row['lineItems'][0].get('categoryId', '') if 'lineItems' in row and isinstance(row['lineItems'], list) and row['lineItems'] else '', axis=1)
+    df['legacyItemId'] = df.apply(lambda row: row['lineItems'][0].get('legacyItemId', '') if 'lineItems' in row and isinstance(row['lineItems'], list) and row['lineItems'] else '', axis=1)
+    df['variationAttributes'] = df.apply(
+        lambda row: ', '.join(f"{va['name']}: {va['value']}" for va in row['lineItems'][0].get('variationAspects', []))
+        if 'lineItems' in row and isinstance(row['lineItems'], list) and row['lineItems'] and isinstance(row['lineItems'][0], dict) and 'variationAspects' in row['lineItems'][0]
+        else '', axis=1
+    )
+
+    # Ensure required fields exist with default values
+    for field in ["buyer", "pricingSummary", "buyerCheckoutNotes", "personalization", "title", "legacyItemId", "orderDate", "categoryId", "itemCost", "reship"]:
+        if field not in df.columns:
+            df[field] = '' if df.dtypes.get(field, pd.Series(dtype='object')).name in ['object', 'str'] else pd.NaT
+
+    # Merge note fields
+    df['note'] = df.apply(lambda row: f"{str(row.get('buyerCheckoutNotes', '')).strip()} | {str(row.get('personalization', '')).strip()}".strip(' |'), axis=1)
+
+    # Add shortTitle and listingUrl
+    df["shortTitle"] = df["title"].astype(str).str.replace(r"[^a-zA-Z0-9 ]", "", regex=True).str.slice(0, 50)
+    df["listingUrl"] = "https://www.ebay.com/itm/" + df["legacyItemId"].astype(str)
+
+    # Parse and categorize lateness
+    df["orderDate"] = pd.to_datetime(df.get("orderDate", pd.NaT), errors="coerce")
+
+    def categorize_lateness(date):
+        if pd.isnull(date):
+            return ""
+        delta = (datetime.now() - date).days
+        if delta > 10:
+            return "HOT"
+        elif delta > 5:
+            return "Urgent"
+        elif delta > 3:
+            return "Late"
+        return ""
+
+    df["daysLate"] = df["orderDate"].apply(categorize_lateness)
+
+    df["categoryId"] = df.get("categoryId", "")
+    df["itemCost"] = pd.to_numeric(df.get("itemCost", pd.Series([0] * len(df))), errors="coerce").fillna(0)
+
+    # Normalize 'reship' to boolean
+    df['reship'] = df['reship'].astype(str).str.lower() == 'true'
+
+    # Send to picksheet generator
+    generate_pick_sheet(df.to_dict(orient="records"))
+```
+
+```python
+# === Corrected picksheet.py ===
+import os
+import pandas as pd
+from datetime import datetime
+from openpyxl import Workbook
+
+FILTER_DIR = "filter_history"
+os.makedirs(FILTER_DIR, exist_ok=True)
+
+def generate_pick_sheet(orders, timestamp=None):
+    if timestamp is None:
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
+
+    df = pd.DataFrame(orders)
+
+    # Fill missing fields with safe defaults
+    df["shortTitle"] = df.get("shortTitle", "")
+    df["listingUrl"] = df.get("listingUrl", "")
+    df["variationAttributes"] = df.get("variationAttributes", "")
+    df["trackingNumber"] = df.get("trackingNumber", "")
+    df["shippingService"] = df.get("shippingService", "")
+
+    # Corrected handling for 'trackingStatus' to ensure it's always treated as a Series
+    if "trackingStatus" not in df:
+        df["trackingStatus"] = ""
+    df["trackingStatus"] = df["trackingStatus"].astype(str).str.upper()
+
+    df["categoryId"] = df.get("categoryId", "")
+    df["itemCost"] = df.get("itemCost", 0)
+    df["daysLate"] = df.get("daysLate", "")
+
+    # Normalize 'reship' to boolean
+    if "reship" not in df:
+        df["reship"] = ""
+    df["reship"] = df["reship"].astype(str).str.lower() == "true"
+
+    df["note"] = df.get("note", "")
+
+    # Define output columns
+    output_columns = [
+        "shortTitle",
+        "listingUrl",
+        "variationAttributes",
+        "trackingNumber",
+        "shippingService",
+        "trackingStatus",
+        "categoryId",
+        "itemCost",
+        "daysLate",
+        "reship",
+        "note",
+    ]
+
+    # Ensure clean formatting
+    df["itemCost"] = pd.to_numeric(df["itemCost"], errors="coerce").fillna(0)
+
+    # Filtered sheets
+    sheets = {
+        "hot": df[df["daysLate"].str.upper() == "HOT"],  # Ensure comparison in uppercase
+        "reships": df[df["reship"] == True],
+        "notes": df[df["note"].str.strip() != ""],
+        "delivered": df[df["trackingStatus"] == "DELIVERED"],  # Corrected case sensitivity
+    }
+
+    for label, sub_df in sheets.items():
+        path = os.path.join(FILTER_DIR, f"pick_sheet_{label}_{timestamp}.xlsx")
+        sub_df.to_excel(path, index=False, columns=output_columns)
+        print(f"✅ Exported: {path}")
+
+    # Full sheet as CSV (including all columns for raw ref)
+    csv_path = os.path.join(FILTER_DIR, f"pick_sheet_full_{timestamp}.csv")
+    df.to_csv(csv_path, index=False)
+    print(f"✅ Exported: {csv_path}")
+```
+
+
+[Prompt - 2025-05-22 00:00:51.094786]
+You are auditing and correcting two linked scripts in an eBay order management tool:
+
+1. `backlog_export.py` - constructs a pandas DataFrame from a list of eBay orders and prepares the data
+2. `picksheet.py` - generates multiple Excel pick sheets from the records it receives
+
+---
+
+📦 Problem:
+All generated pick sheets (`hot.xlsx`, `reships.xlsx`, `notes.xlsx`, `delivered.xlsx`) are currently empty.
+
+The problem could be caused by:
+- Missing or misnamed fields in the DataFrame coming from `backlog_export.py`
+- Filters in `picksheet.py` that rely on inconsistent or unnormalized data
+- Wrong datatypes (e.g. booleans as strings, missing fields defaulting to incorrect values)
+
+---
+
+✅ Your task:
+
+1. Audit and fix `backlog_export.py` to ensure all required fields are extracted and populated correctly.
+2. Audit and fix `picksheet.py` to ensure filters and column logic match the actual incoming data.
+3. Make sure filters like 'HOT', 'reships', 'delivered', and 'note' match the data correctly.
+
+Here is the required final column output spec:
+
+- shortTitle: Cleaned and shortened title from lineItems[0].title
+- listingUrl: Constructed from lineItems[0].legacyItemId
+- variationAttributes: Comma-separated string of variationAspects
+- trackingNumber: From fulfillment data
+- shippingService: From fulfillment data
+- trackingStatus: From fulfillment data (normalized to uppercase string)
+- categoryId: From lineItems[0].categoryId
+- itemCost: Numeric total or gross value
+- daysLate: Calculated from orderDate
+- reship: Boolean, from reship field (may be a string "true")
+- note: Merged string from buyerCheckoutNotes and personalization (if either is present)
+
+---
+
+Return corrected versions of BOTH files:
+- backlog_export.py
+- picksheet.py
+
+They must work together to produce valid pick sheets containing actual data from realistic order inputs.
+
+Do not output explanations — return only both full scripts in markdown code blocks.
+
+# === Injected from GitHub: backlog_export.py ===
+import os
+import pandas as pd
+from datetime import datetime
+from picksheet import generate_pick_sheet
+
+def generate_backlog_exports(all_orders):
+    df = pd.DataFrame(all_orders)
+
+    # Safely access 'lineItems' and other fields
+    df['title'] = df.apply(lambda row: row['lineItems'][0].get('title', '') if 'lineItems' in row and isinstance(row['lineItems'], list) and row['lineItems'] else '', axis=1)
+    df['categoryId'] = df.apply(lambda row: row['lineItems'][0].get('categoryId', '') if 'lineItems' in row and isinstance(row['lineItems'], list) and row['lineItems'] else '', axis=1)
+    df['legacyItemId'] = df.apply(lambda row: row['lineItems'][0].get('legacyItemId', '') if 'lineItems' in row and isinstance(row['lineItems'], list) and row['lineItems'] else '', axis=1)
+    df['variationAttributes'] = df.apply(
+        lambda row: ', '.join(f"{va['name']}: {va['value']}" for va in row['lineItems'][0].get('variationAspects', []))
+        if 'lineItems' in row and isinstance(row['lineItems'], list) and row['lineItems'] and isinstance(row['lineItems'][0], dict) and 'variationAspects' in row['lineItems'][0]
+        else '', axis=1
+    )
+
+    # Ensure required fields exist with default values
+    for field in ["buyer", "pricingSummary", "buyerCheckoutNotes", "personalization", "title", "legacyItemId", "orderDate", "categoryId", "itemCost", "reship"]:
+        if field not in df.columns:
+            df[field] = '' if df.dtypes.get(field, pd.Series(dtype='object')).name in ['object', 'str'] else pd.NaT
+
+    # Merge note fields
+    df['note'] = df.apply(lambda row: f"{str(row.get('buyerCheckoutNotes', '')).strip()} | {str(row.get('personalization', '')).strip()}".strip(' |'), axis=1)
+
+    df["buyerNote"] = df.get("buyerNote", "")
+
+    # Add shortTitle and listingUrl
+    df["shortTitle"] = df["title"].astype(str).str.replace(r"[^a-zA-Z0-9 ]", "", regex=True).str.slice(0, 50)
+    df["listingUrl"] = "https://www.ebay.com/itm/" + df["legacyItemId"].astype(str)
+
+    # Parse and categorize lateness
+    df["orderDate"] = pd.to_datetime(df.get("orderDate", pd.NaT), errors="coerce")
+
+    def categorize_lateness(date):
+        if pd.isnull(date):
+            return ""
+        delta = (datetime.now() - date).days
+        if delta > 10:
+            return "HOT"
+        elif delta > 5:
+            return "Urgent"
+        elif delta > 3:
+            return "Late"
+        return ""
+
+    df["daysLate"] = df["orderDate"].apply(categorize_lateness)
+
+    df["categoryId"] = df.get("categoryId", "")
+    df["itemCost"] = pd.to_numeric(df.get("itemCost", pd.Series([0] * len(df))), errors="coerce").fillna(0)
+
+    # Send to picksheet generator
+    generate_pick_sheet(df.to_dict(orient="records"))
+
+# === Injected from GitHub: picksheet.py ===
+import os
+import pandas as pd
+from datetime import datetime
+from openpyxl import Workbook
+
+FILTER_DIR = "filter_history"
+os.makedirs(FILTER_DIR, exist_ok=True)
+
+def generate_pick_sheet(orders, timestamp=None):
+    if timestamp is None:
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
+
+    df = pd.DataFrame(orders)
+
+    # Fill missing fields with safe defaults
+    df["shortTitle"] = df.get("shortTitle", "")
+    df["listingUrl"] = df.get("listingUrl", "")
+    df["variationAttributes"] = df.get("variationAttributes", "")
+    df["trackingNumber"] = df.get("trackingNumber", "")
+    df["shippingService"] = df.get("shippingService", "")
+
+    # Corrected handling for 'trackingStatus' to ensure it's always treated as a Series
+    if "trackingStatus" not in df:
+        df["trackingStatus"] = ""
+    df["trackingStatus"] = df["trackingStatus"].astype(str).str.upper()
+
+    df["categoryId"] = df.get("categoryId", "")
+    df["itemCost"] = df.get("itemCost", 0)
+    df["daysLate"] = df.get("daysLate", "")
+
+    # Normalize 'reship' to boolean
+    if "reship" not in df:
+        df["reship"] = ""
+    df["reship"] = df["reship"].astype(str).str.lower() == "true"
+
+    df["note"] = df.get("note", "")
+
+    # Define output columns
+    output_columns = [
+        "shortTitle",
+        "listingUrl",
+        "variationAttributes",
+        "trackingNumber",
+        "shippingService",
+        "trackingStatus",
+        "categoryId",
+        "itemCost",
+        "daysLate",
+        "reship",
+        "note",
+    ]
+
+    # Ensure clean formatting
+    df["itemCost"] = pd.to_numeric(df["itemCost"], errors="coerce").fillna(0)
+
+    # Filtered sheets
+    sheets = {
+        "hot": df[df["daysLate"].str.upper() == "HOT"],  # Ensure comparison in uppercase
+        "reships": df[df["reship"] == True],
+        "notes": df[df["note"].str.strip() != ""],
+        "delivered": df[df["trackingStatus"] == "DELIVERED"],  # Corrected case sensitivity
+    }
+
+    for label, sub_df in sheets.items():
+        path = os.path.join(FILTER_DIR, f"pick_sheet_{label}_{timestamp}.xlsx")
+        sub_df.to_excel(path, index=False, columns=output_columns)
+        print(f"✅ Exported: {path}")
+
+    # Full sheet as CSV (including all columns for raw ref)
+    csv_path = os.path.join(FILTER_DIR, f"pick_sheet_full_{timestamp}.csv")
+    df.to_csv(csv_path, index=False)
+    print(f"✅ Exported: {csv_path}")
+
+
+# === Injected from GitHub: backlog_export.py ===
+import os
+import pandas as pd
+from datetime import datetime
+from picksheet import generate_pick_sheet
+
+def generate_backlog_exports(all_orders):
+    df = pd.DataFrame(all_orders)
+
+    # Safely access 'lineItems' and other fields
+    df['title'] = df.apply(lambda row: row['lineItems'][0].get('title', '') if 'lineItems' in row and isinstance(row['lineItems'], list) and row['lineItems'] else '', axis=1)
+    df['categoryId'] = df.apply(lambda row: row['lineItems'][0].get('categoryId', '') if 'lineItems' in row and isinstance(row['lineItems'], list) and row['lineItems'] else '', axis=1)
+    df['legacyItemId'] = df.apply(lambda row: row['lineItems'][0].get('legacyItemId', '') if 'lineItems' in row and isinstance(row['lineItems'], list) and row['lineItems'] else '', axis=1)
+    df['variationAttributes'] = df.apply(
+        lambda row: ', '.join(f"{va['name']}: {va['value']}" for va in row['lineItems'][0].get('variationAspects', []))
+        if 'lineItems' in row and isinstance(row['lineItems'], list) and row['lineItems'] and isinstance(row['lineItems'][0], dict) and 'variationAspects' in row['lineItems'][0]
+        else '', axis=1
+    )
+
+    # Ensure required fields exist with default values
+    for field in ["buyer", "pricingSummary", "buyerCheckoutNotes", "personalization", "title", "legacyItemId", "orderDate", "categoryId", "itemCost", "reship"]:
+        if field not in df.columns:
+            df[field] = '' if df.dtypes.get(field, pd.Series(dtype='object')).name in ['object', 'str'] else pd.NaT
+
+    # Merge note fields
+    df['note'] = df.apply(lambda row: f"{str(row.get('buyerCheckoutNotes', '')).strip()} | {str(row.get('personalization', '')).strip()}".strip(' |'), axis=1)
+
+    df["buyerNote"] = df.get("buyerNote", "")
+
+    # Add shortTitle and listingUrl
+    df["shortTitle"] = df["title"].astype(str).str.replace(r"[^a-zA-Z0-9 ]", "", regex=True).str.slice(0, 50)
+    df["listingUrl"] = "https://www.ebay.com/itm/" + df["legacyItemId"].astype(str)
+
+    # Parse and categorize lateness
+    df["orderDate"] = pd.to_datetime(df.get("orderDate", pd.NaT), errors="coerce")
+
+    def categorize_lateness(date):
+        if pd.isnull(date):
+            return ""
+        delta = (datetime.now() - date).days
+        if delta > 10:
+            return "HOT"
+        elif delta > 5:
+            return "Urgent"
+        elif delta > 3:
+            return "Late"
+        return ""
+
+    df["daysLate"] = df["orderDate"].apply(categorize_lateness)
+
+    df["categoryId"] = df.get("categoryId", "")
+    df["itemCost"] = pd.to_numeric(df.get("itemCost", pd.Series([0] * len(df))), errors="coerce").fillna(0)
+
+    # Send to picksheet generator
+    generate_pick_sheet(df.to_dict(orient="records"))
+
+# === Injected from GitHub: picksheet.py ===
+import os
+import pandas as pd
+from datetime import datetime
+from openpyxl import Workbook
+
+FILTER_DIR = "filter_history"
+os.makedirs(FILTER_DIR, exist_ok=True)
+
+def generate_pick_sheet(orders, timestamp=None):
+    if timestamp is None:
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
+
+    df = pd.DataFrame(orders)
+
+    # Fill missing fields with safe defaults
+    df["shortTitle"] = df.get("shortTitle", "")
+    df["listingUrl"] = df.get("listingUrl", "")
+    df["variationAttributes"] = df.get("variationAttributes", "")
+    df["trackingNumber"] = df.get("trackingNumber", "")
+    df["shippingService"] = df.get("shippingService", "")
+
+    # Corrected handling for 'trackingStatus' to ensure it's always treated as a Series
+    if "trackingStatus" not in df:
+        df["trackingStatus"] = ""
+    df["trackingStatus"] = df["trackingStatus"].astype(str).str.upper()
+
+    df["categoryId"] = df.get("categoryId", "")
+    df["itemCost"] = df.get("itemCost", 0)
+    df["daysLate"] = df.get("daysLate", "")
+
+    # Normalize 'reship' to boolean
+    if "reship" not in df:
+        df["reship"] = ""
+    df["reship"] = df["reship"].astype(str).str.lower() == "true"
+
+    df["note"] = df.get("note", "")
+
+    # Define output columns
+    output_columns = [
+        "shortTitle",
+        "listingUrl",
+        "variationAttributes",
+        "trackingNumber",
+        "shippingService",
+        "trackingStatus",
+        "categoryId",
+        "itemCost",
+        "daysLate",
+        "reship",
+        "note",
+    ]
+
+    # Ensure clean formatting
+    df["itemCost"] = pd.to_numeric(df["itemCost"], errors="coerce").fillna(0)
+
+    # Filtered sheets
+    sheets = {
+        "hot": df[df["daysLate"].str.upper() == "HOT"],  # Ensure comparison in uppercase
+        "reships": df[df["reship"] == True],
+        "notes": df[df["note"].str.strip() != ""],
+        "delivered": df[df["trackingStatus"] == "DELIVERED"],  # Corrected case sensitivity
+    }
+
+    for label, sub_df in sheets.items():
+        path = os.path.join(FILTER_DIR, f"pick_sheet_{label}_{timestamp}.xlsx")
+        sub_df.to_excel(path, index=False, columns=output_columns)
+        print(f"✅ Exported: {path}")
+
+    # Full sheet as CSV (including all columns for raw ref)
+    csv_path = os.path.join(FILTER_DIR, f"pick_sheet_full_{timestamp}.csv")
+    df.to_csv(csv_path, index=False)
+    print(f"✅ Exported: {csv_path}")
+
+[Response]
+```python
+# === backlog_export.py ===
+import os
+import pandas as pd
+from datetime import datetime
+from picksheet import generate_pick_sheet
+
+def generate_backlog_exports(all_orders):
+    df = pd.DataFrame(all_orders)
+
+    # Safely access 'lineItems' and other fields
+    df['title'] = df.apply(lambda row: row['lineItems'][0].get('title', '') if 'lineItems' in row and isinstance(row['lineItems'], list) and row['lineItems'] else '', axis=1)
+    df['categoryId'] = df.apply(lambda row: row['lineItems'][0].get('categoryId', '') if 'lineItems' in row and isinstance(row['lineItems'], list) and row['lineItems'] else '', axis=1)
+    df['legacyItemId'] = df.apply(lambda row: row['lineItems'][0].get('legacyItemId', '') if 'lineItems' in row and isinstance(row['lineItems'], list) and row['lineItems'] else '', axis=1)
+    df['variationAttributes'] = df.apply(
+        lambda row: ', '.join(f"{va['name']}: {va['value']}" for va in row['lineItems'][0].get('variationAspects', []))
+        if 'lineItems' in row and isinstance(row['lineItems'], list) and row['lineItems'] and isinstance(row['lineItems'][0], dict) and 'variationAspects' in row['lineItems'][0]
+        else '', axis=1
+    )
+
+    # Ensure required fields exist with default values
+    for field in ["buyerCheckoutNotes", "personalization"]:
+        if field not in df.columns:
+            df[field] = ''
+
+    # Merge note fields
+    df['note'] = df.apply(lambda row: f"{str(row.get('buyerCheckoutNotes', '')).strip()} | {str(row.get('personalization', '')).strip()}".strip(' |'), axis=1)
+
+    # Add shortTitle and listingUrl
+    df["shortTitle"] = df["title"].astype(str).str.replace(r"[^a-zA-Z0-9 ]", "", regex=True).str.slice(0, 50)
+    df["listingUrl"] = "https://www.ebay.com/itm/" + df["legacyItemId"].astype(str)
+
+    # Parse and categorize lateness
+    df["orderDate"] = pd.to_datetime(df.get("orderDate", pd.NaT), errors="coerce")
+    df["daysLate"] = df["orderDate"].apply(lambda date: (datetime.now() - date).days if pd.notnull(date) else None)
+
+    df["categoryId"] = df.get("categoryId", "")
+    df["itemCost"] = pd.to_numeric(df.get("itemCost", pd.Series([0] * len(df))), errors="coerce").fillna(0)
+    df["reship"] = df.get("reship", "").astype(str).str.lower() == "true"
+
+    # Send to picksheet generator
+    generate_pick_sheet(df.to_dict(orient="records"))
+```
+
+```python
+# === picksheet.py ===
+import os
+import pandas as pd
+from datetime import datetime
+from openpyxl import Workbook
+
+FILTER_DIR = "filter_history"
+os.makedirs(FILTER_DIR, exist_ok=True)
+
+def generate_pick_sheet(orders, timestamp=None):
+    if timestamp is None:
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
+
+    df = pd.DataFrame(orders)
+
+    # Fill missing fields with safe defaults
+    df["shortTitle"] = df.get("shortTitle", "")
+    df["listingUrl"] = df.get("listingUrl", "")
+    df["variationAttributes"] = df.get("variationAttributes", "")
+    df["trackingNumber"] = df.get("trackingNumber", "")
+    df["shippingService"] = df.get("shippingService", "")
+    df["trackingStatus"] = df.get("trackingStatus", "").astype(str).str.upper()
+    df["categoryId"] = df.get("categoryId", "")
+    df["itemCost"] = df.get("itemCost", 0)
+    df["daysLate"] = df.get("daysLate", "")
+    df["reship"] = df.get("reship", False)
+    df["note"] = df.get("note", "")
+
+    # Define output columns
+    output_columns = [
+        "shortTitle",
+        "listingUrl",
+        "variationAttributes",
+        "trackingNumber",
+        "shippingService",
+        "trackingStatus",
+        "categoryId",
+        "itemCost",
+        "daysLate",
+        "reship",
+        "note",
+    ]
+
+    # Ensure clean formatting
+    df["itemCost"] = pd.to_numeric(df["itemCost"], errors="coerce").fillna(0)
+
+    # Filtered sheets
+    sheets = {
+        "hot": df[df["daysLate"] > 10],
+        "reships": df[df["reship"]],
+        "notes": df[df["note"].str.strip() != ""],
+        "delivered": df[df["trackingStatus"] == "DELIVERED"],
+    }
+
+    for label, sub_df in sheets.items():
+        path = os.path.join(FILTER_DIR, f"pick_sheet_{label}_{timestamp}.xlsx")
+        sub_df.to_excel(path, index=False, columns=output_columns)
+        print(f"✅ Exported: {path}")
+
+    # Full sheet as CSV (including all columns for raw ref)
+    csv_path = os.path.join(FILTER_DIR, f"pick_sheet_full_{timestamp}.csv")
+    df.to_csv(csv_path, index=False)
+    print(f"✅ Exported: {csv_path}")
+```

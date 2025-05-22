@@ -65,12 +65,7 @@ def inject_from_github():
         print("❌ No prompt.txt found.")
         return
 
-    with open(PROMPT_FILE, "r", encoding="utf-8") as f:
-        prompt_body = f.read()
-
-    with open(PROMPT_FILE, "w", encoding="utf-8") as f:
-        f.write(prompt_body.strip() + "\n\n")
-
+    with open(PROMPT_FILE, "a", encoding="utf-8") as f:
         for filename in [fn.strip() for fn in filenames.split(",") if fn.strip()]:
             url = f"https://raw.githubusercontent.com/niado1/ebymgr/main/{filename}"
             print(f"📡 Fetching {filename} from GitHub...")
@@ -78,8 +73,8 @@ def inject_from_github():
                 response = requests.get(url)
                 response.raise_for_status()
                 file_content = response.text
-                f.write(f"# === Injected from GitHub: {filename} ===\n")
-                f.write(file_content + "\n\n")
+                f.write(f"\n# === Injected from GitHub: {filename} ===\n")
+                f.write(file_content + "\n")
                 print(f"✅ Injected {filename} into prompt.txt")
             except Exception as e:
                 print(f"❌ Failed to retrieve {filename}: {e}")
@@ -93,23 +88,31 @@ def apply_gpt_response():
         content = f.read()
 
     code_blocks = re.findall(r"```(?:python)?\n(.*?)```", content, re.DOTALL)
-    filename_match = re.search(r"Enter filename to apply code block \d+.*?: ([\w_.-]+)", content)
+    filenames = re.findall(r"# === Corrected ([\w_.-]+) ===", content)
 
-    if code_blocks and filename_match:
-        target_filename = filename_match.group(1).strip()
-        print(f"💾 Preparing to auto-save into: {target_filename}")
+    if not code_blocks:
+        print("⚠️ No code block found in chat_log.txt")
+        return
 
-        # Backup existing file
-        if os.path.exists(target_filename):
-            backup_filename = target_filename.replace(".py", ".old.py")
-            shutil.copy2(target_filename, backup_filename)
+    if not filenames:
+        print("⚠️ No filename tags found in chat_log.txt — skipping auto-apply.")
+        return
+
+    for i, filename in enumerate(filenames):
+        code = code_blocks[i] if i < len(code_blocks) else None
+        if not code:
+            print(f"⚠️ No code block found for {filename}")
+            continue
+
+        if os.path.exists(filename):
+            backup_filename = filename.replace(".py", ".old.py")
+            shutil.copy2(filename, backup_filename)
             print(f"🕐 Existing file backed up as: {backup_filename}")
 
-        with open(target_filename, "w", encoding="utf-8") as f:
-            f.write(code_blocks[0].strip())
-        print(f"✅ GPT code applied to: {target_filename}")
-    else:
-        print("⚠️ No filename or code block found in chat_log.txt")
+        with open(filename, "w", encoding="utf-8") as f_out:
+            f_out.write(code.strip())
+
+        print(f"✅ GPT code applied to: {filename}")
 
 def main():
     ensure_dependencies()

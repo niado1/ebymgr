@@ -1,72 +1,88 @@
-import os
+import json
+import requests
 import pandas as pd
-from datetime import datetime
-from openpyxl import Workbook
+import logging
+import os
+from dotenv import load_dotenv
 
-FILTER_DIR = "filter_history"
-os.makedirs(FILTER_DIR, exist_ok=True)
+logger = logging.getLogger(__name__)
+load_dotenv()
 
-def generate_pick_sheet(orders, timestamp=None):
-    if timestamp is None:
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
+def get_access_token():
+    # Load credentials and refresh token from .env file
+    client_id = os.getenv('EBAY_CLIENT_ID')
+    client_secret = os.getenv('EBAY_CLIENT_SECRET')
+    refresh_token = os.getenv('EBAY_REFRESH_TOKEN')
 
-    df = pd.DataFrame(orders)
-
-    # Fill missing fields with safe defaults
-    df["shortTitle"] = df.get("shortTitle", "")
-    df["listingUrl"] = df.get("listingUrl", "")
-    df["variationAttributes"] = df.get("variationAttributes", "")
-    df["trackingNumber"] = df.get("trackingNumber", "")
-    df["shippingService"] = df.get("shippingService", "")
-
-    # Corrected handling for 'trackingStatus' to ensure it's always treated as a Series
-    if "trackingStatus" not in df:
-        df["trackingStatus"] = ""
-    df["trackingStatus"] = df["trackingStatus"].astype(str).str.upper()
-
-    df["categoryId"] = df.get("categoryId", "")
-    df["itemCost"] = df.get("itemCost", 0)
-    df["daysLate"] = df.get("daysLate", "")
-
-    # Normalize 'reship' to boolean
-    if "reship" not in df:
-        df["reship"] = ""
-    df["reship"] = df["reship"].astype(str).str.lower() == "true"
-
-    df["note"] = df.get("note", "")
-
-    # Define output columns
-    output_columns = [
-        "shortTitle",
-        "listingUrl",
-        "variationAttributes",
-        "trackingNumber",
-        "shippingService",
-        "trackingStatus",
-        "categoryId",
-        "itemCost",
-        "daysLate",
-        "reship",
-        "note",
-    ]
-
-    # Ensure clean formatting
-    df["itemCost"] = pd.to_numeric(df["itemCost"], errors="coerce").fillna(0)
-
-    # Filtered sheets
-    sheets = {
-        "hot": df[df["daysLate"].str.upper() == "HOT"],  # Ensure comparison in uppercase
-        "reships": df[df["reship"] == True],
-        "notes": df[df["note"].str.strip() != ""],
-        "delivered": df[df["trackingStatus"] == "DELIVERED"],  # Corrected case sensitivity
+    # Prepare the request for the OAuth token
+    url = "https://api.ebay.com/identity/v1/oauth2/token"
+    headers = {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Authorization": f"Basic {requests.auth._basic_auth_str(client_id, client_secret)}"
+    }
+    body = {
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+        "scope": "https://api.ebay.com/oauth/api_scope"  # Adjust scope as necessary
     }
 
-    for label, sub_df in sheets.items():
-        path = os.path.join(FILTER_DIR, f"pick_sheet_{label}_{timestamp}.xlsx")
-        sub_df.to_excel(path, index=False, columns=output_columns)
-        print(f"✅ Exported: {path}")
+    # Make the request for a new access token
+    response = requests.post(url, headers=headers, data=body)
+    response_data = response.json()
 
-    # Full sheet as CSV (including all columns for raw ref)
-    csv_path = os.path.join(FILTER_DIR, f"pick_sheet_full_{timestamp}.csv")
-    df.to_csv(csv_path, index=False)
-    print(f"✅ Exported: {csv_path}")
+    if response.status_code != 200:
+        logger.error("Failed to retrieve access token: %s", response_data)
+        raise Exception("Failed to retrieve access token")
+
+    return response_data['access_token']
+
+def get_orders_raw():
+    token = get_access_token()
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    url = "https://api.ebay.com/sell/fulfillment/v1/order?limit=200"
+
+    response = requests.get(url, headers=headers)
+    orders = response.json().get("orders", [])
+
+    with open("raw_orders.json", "w", encoding="utf-8") as f:
+        json.dump(orders, f, indent=2)
+
+    # Also save with fulfillment for later debugging
+    for o in orders:
+        if "fulfillmentHrefs" in o:
+            o["fulfillmentHrefsCount"] = len(o["fulfillmentHrefs"])
+    with open("raw_orders_with_fulfillments.json", "w", encoding="utf-8") as f:
+        json.dump(orders, f, indent=2)
+
+    logging.info("Fetched %d orders from eBay API", len(orders))
+    return orders
+
+def fetch_tracking_data_from_fulfillment(df):
+    """Extract trackingNumber, shippingService, trackingStatus from fulfillment data."""
+    results = []
+
+    for _, row in df.iterrows():
+        order_id = row.get("orderId")
+        fulfillments = row.get("fulfillmentStartInstructions", [])
+        tracking_number = ""
+        shipping_service = ""
+        tracking_status = ""
+
+        if isinstance(fulfillments, list) and len(fulfillments) > 0:
+            for f in fulfillments:
+                try:
+                    shipment = f.get("shippingStep", {}).get("shipmentTracking", {})
+                    tracking_number = shipment.get("trackingNumber", "") or tracking_number
+                    shipping_service = shipment.get("shippingCarrierCode", "") or shipping_service
+                    tracking_status = shipment.get("status", "") or tracking_status
+                except Exception:
+                    continue
+
+        results.append({
+            "orderId": order_id,
+            "trackingNumber": tracking_number,
+            "shippingService": shipping_service,
+            "trackingStatus": tracking_status
+        })
+
+    return pd.DataFrame(results)

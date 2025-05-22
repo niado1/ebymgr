@@ -1,54 +1,63 @@
 import os
 import pandas as pd
 from datetime import datetime
-from picksheet import generate_pick_sheet
+from openpyxl import Workbook
 
-def generate_backlog_exports(all_orders):
-    df = pd.DataFrame(all_orders)
+FILTER_DIR = "filter_history"
+os.makedirs(FILTER_DIR, exist_ok=True)
 
-    # Safely access 'lineItems' and other fields
-    df['title'] = df.apply(lambda row: row['lineItems'][0].get('title', '') if 'lineItems' in row and isinstance(row['lineItems'], list) and row['lineItems'] else '', axis=1)
-    df['categoryId'] = df.apply(lambda row: row['lineItems'][0].get('categoryId', '') if 'lineItems' in row and isinstance(row['lineItems'], list) and row['lineItems'] else '', axis=1)
-    df['legacyItemId'] = df.apply(lambda row: row['lineItems'][0].get('legacyItemId', '') if 'lineItems' in row and isinstance(row['lineItems'], list) and row['lineItems'] else '', axis=1)
-    df['variationAttributes'] = df.apply(
-        lambda row: ', '.join(f"{va['name']}: {va['value']}" for va in row['lineItems'][0].get('variationAspects', []))
-        if 'lineItems' in row and isinstance(row['lineItems'], list) and row['lineItems'] and isinstance(row['lineItems'][0], dict) and 'variationAspects' in row['lineItems'][0]
-        else '', axis=1
-    )
+def generate_pick_sheet(orders, timestamp=None):
+    if timestamp is None:
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
 
-    # Ensure required fields exist with default values
-    for field in ["buyer", "pricingSummary", "buyerCheckoutNotes", "personalization", "title", "legacyItemId", "orderDate", "categoryId", "itemCost", "reship"]:
-        if field not in df.columns:
-            df[field] = '' if df.dtypes.get(field, pd.Series(dtype='object')).name in ['object', 'str'] else pd.NaT
+    df = pd.DataFrame(orders)
 
-    # Merge note fields
-    df['note'] = df.apply(lambda row: f"{str(row.get('buyerCheckoutNotes', '')).strip()} | {str(row.get('personalization', '')).strip()}".strip(' |'), axis=1)
-
-    df["buyerNote"] = df.get("buyerNote", "")
-
-    # Add shortTitle and listingUrl
-    df["shortTitle"] = df["title"].astype(str).str.replace(r"[^a-zA-Z0-9 ]", "", regex=True).str.slice(0, 50)
-    df["listingUrl"] = "https://www.ebay.com/itm/" + df["legacyItemId"].astype(str)
-
-    # Parse and categorize lateness
-    df["orderDate"] = pd.to_datetime(df.get("orderDate", pd.NaT), errors="coerce")
-
-    def categorize_lateness(date):
-        if pd.isnull(date):
-            return ""
-        delta = (datetime.now() - date).days
-        if delta > 10:
-            return "HOT"
-        elif delta > 5:
-            return "Urgent"
-        elif delta > 3:
-            return "Late"
-        return ""
-
-    df["daysLate"] = df["orderDate"].apply(categorize_lateness)
-
+    # Fill missing fields with safe defaults
+    df["shortTitle"] = df.get("shortTitle", "")
+    df["listingUrl"] = df.get("listingUrl", "")
+    df["variationAttributes"] = df.get("variationAttributes", "")
+    df["trackingNumber"] = df.get("trackingNumber", "")
+    df["shippingService"] = df.get("shippingService", "")
+    df["trackingStatus"] = df.get("trackingStatus", "").str.upper()  # Normalize to uppercase
     df["categoryId"] = df.get("categoryId", "")
-    df["itemCost"] = pd.to_numeric(df.get("itemCost", pd.Series([0] * len(df))), errors="coerce").fillna(0)
+    df["itemCost"] = df.get("itemCost", 0)
+    df["daysLate"] = df.get("daysLate", "")
+    df["reship"] = df.get("reship", "").str.lower() == "true"  # Normalize to boolean
 
-    # Send to picksheet generator
-    generate_pick_sheet(df.to_dict(orient="records"))
+    df["note"] = df.get("note", "")
+
+    # Define output columns
+    output_columns = [
+        "shortTitle",
+        "listingUrl",
+        "variationAttributes",
+        "trackingNumber",
+        "shippingService",
+        "trackingStatus",
+        "categoryId",
+        "itemCost",
+        "daysLate",
+        "reship",
+        "note",
+    ]
+
+    # Ensure clean formatting
+    df["itemCost"] = pd.to_numeric(df["itemCost"], errors="coerce").fillna(0)
+
+    # Filtered sheets
+    sheets = {
+        "hot": df[df["daysLate"].str.upper() == "HOT"],  # Ensure comparison in uppercase
+        "reships": df[df["reship"] == True],
+        "notes": df[df["note"].str.strip() != ""],
+        "delivered": df[df["trackingStatus"] == "DELIVERED"],  # Corrected case sensitivity
+    }
+
+    for label, sub_df in sheets.items():
+        path = os.path.join(FILTER_DIR, f"pick_sheet_{label}_{timestamp}.xlsx")
+        sub_df.to_excel(path, index=False, columns=output_columns)
+        print(f"✅ Exported: {path}")
+
+    # Full sheet as CSV (including all columns for raw ref)
+    csv_path = os.path.join(FILTER_DIR, f"pick_sheet_full_{timestamp}.csv")
+    df.to_csv(csv_path, index=False)
+    print(f"✅ Exported: {csv_path}")
